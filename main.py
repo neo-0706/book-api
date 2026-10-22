@@ -1,17 +1,19 @@
+import os
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, status, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy import create_engine, Column, Integer, String
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
-import os
-from dotenv import load_dotenv
+
+load_dotenv()
+
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-load_dotenv()
-DATABASE_URL = os.getenv("DATABASE_URL")
 
 class BookModel(Base):
     __tablename__ = "books"
@@ -21,7 +23,9 @@ class BookModel(Base):
     author = Column(String, nullable=False)
     published_year = Column(Integer, nullable=False)
 
+
 Base.metadata.create_all(bind=engine)
+
 
 def get_db():
     db = SessionLocal()
@@ -29,6 +33,7 @@ def get_db():
         yield db
     finally:
         db.close()
+
 
 class BookCreate(BaseModel):
     title: str = Field(min_length=1)
@@ -46,7 +51,7 @@ class Book(BookCreate):
     id: int
 
     class Config:
-        from_attributes = True 
+        from_attributes = True
 
 
 app = FastAPI(
@@ -54,7 +59,6 @@ app = FastAPI(
     description="A simple REST API for managing books with PostgreSQL",
     version="2.0.0",
 )
-
 
 
 @app.get("/books", response_model=list[Book])
