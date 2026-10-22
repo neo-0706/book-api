@@ -1,12 +1,31 @@
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, status, Depends
 from pydantic import BaseModel, Field
+from sqlalchemy import create_engine, Column, Integer, String
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, Session
 
-app = FastAPI(
-    title="Book API",
-    description="A simple REST API for managing books",
-    version="1.0.0",
-)
+DATABASE_URL = "postgresql://postgres:Mo)!@$(@localhost:5432/books"
 
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+class BookModel(Base):
+    __tablename__ = "books"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    title = Column(String, nullable=False)
+    author = Column(String, nullable=False)
+    published_year = Column(Integer, nullable=False)
+
+Base.metadata.create_all(bind=engine)
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 class BookCreate(BaseModel):
     title: str = Field(min_length=1)
@@ -23,14 +42,22 @@ class BookUpdate(BaseModel):
 class Book(BookCreate):
     id: int
 
+    class Config:
+        from_attributes = True 
 
-books: dict[int, Book] = {}
-next_id = 1
+
+app = FastAPI(
+    title="Book API",
+    description="A simple REST API for managing books with PostgreSQL",
+    version="2.0.0",
+)
+
 
 
 @app.get("/books", response_model=list[Book])
-def get_books():
-    return list(books.values())
+def get_books(db: Session = Depends(get_db)):
+    books = db.query(BookModel).all()
+    return books
 
 
 @app.post(
@@ -38,19 +65,21 @@ def get_books():
     response_model=Book,
     status_code=status.HTTP_201_CREATED,
 )
-def create_book(book: BookCreate):
-    global next_id
-
-    new_book = Book(id=next_id, **book.model_dump())
-    books[next_id] = new_book
-    next_id += 1
-
-    return new_book
+def create_book(book: BookCreate, db: Session = Depends(get_db)):
+    db_book = BookModel(
+        title=book.title,
+        author=book.author,
+        published_year=book.published_year
+    )
+    db.add(db_book)
+    db.commit()
+    db.refresh(db_book)
+    return db_book
 
 
 @app.get("/books/{book_id}", response_model=Book)
-def get_book(book_id: int):
-    book = books.get(book_id)
+def get_book(book_id: int, db: Session = Depends(get_db)):
+    book = db.query(BookModel).filter(BookModel.id == book_id).first()
 
     if book is None:
         raise HTTPException(
@@ -62,8 +91,8 @@ def get_book(book_id: int):
 
 
 @app.patch("/books/{book_id}", response_model=Book)
-def update_book(book_id: int, updates: BookUpdate):
-    book = books.get(book_id)
+def update_book(book_id: int, updates: BookUpdate, db: Session = Depends(get_db)):
+    book = db.query(BookModel).filter(BookModel.id == book_id).first()
 
     if book is None:
         raise HTTPException(
@@ -71,22 +100,28 @@ def update_book(book_id: int, updates: BookUpdate):
             detail="Book not found",
         )
 
-    updated_data = updates.model_dump(exclude_unset=True)
-    updated_book = book.model_copy(update=updated_data)
+    update_data = updates.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(book, key, value)
 
-    books[book_id] = updated_book
-    return updated_book
+    db.commit()
+    db.refresh(book)
+    return book
 
 
 @app.delete(
     "/books/{book_id}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
-def delete_book(book_id: int):
-    if book_id not in books:
+def delete_book(book_id: int, db: Session = Depends(get_db)):
+    book = db.query(BookModel).filter(BookModel.id == book_id).first()
+
+    if book is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Book not found",
         )
 
-    del books[book_id]
+    db.delete(book)
+    db.commit()
+    return None
